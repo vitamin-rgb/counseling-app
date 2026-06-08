@@ -23,7 +23,6 @@ from mailer import (
     validate_email,
 )
 
-# Render環境では環境変数から直接設定を読み込む
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "counseling-reservation-local-dev")
 init_mail(app)
@@ -36,15 +35,8 @@ WEEKDAYS = "月火水木金土日"
 
 CALENDAR_ID_OVERRIDE = os.environ.get("CALENDAR_ID", "").strip() or None
 
-class AuthRequired(Exception):
-    """Google 認証がまだ完了していない。"""
-
 def get_oauth_client_config():
-    """環境変数からGoogle OAuth情報を取得"""
-    creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-    if not creds_json:
-        raise ValueError("環境変数 GOOGLE_APPLICATION_CREDENTIALS_JSON が設定されていません。")
-    return json.loads(creds_json)
+    return json.loads(os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
 
 def create_oauth_flow(state=None, code_verifier=None) -> Flow:
     client_config = get_oauth_client_config()
@@ -58,29 +50,13 @@ def create_oauth_flow(state=None, code_verifier=None) -> Flow:
     )
 
 def get_credentials() -> Credentials:
-    """環境変数 GOOGLE_TOKEN_JSON からトークンを取得"""
     token_json = os.environ.get("GOOGLE_TOKEN_JSON")
     if not token_json:
-        raise AuthRequired()
-    
-    creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
-    
-    if creds and creds.valid:
-        return creds
-    if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        # 注: Render環境ではここで更新されたトークンを永続化できません。
-        # 本来はDBや外部ストアに保存する必要があります。
-        return creds
-        
-    raise AuthRequired()
+        raise Exception("GOOGLE_TOKEN_JSON が環境変数に設定されていません！")
+    return Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
 
 def get_calendar_service():
     return build("calendar", "v3", credentials=get_credentials())
-
-# ---------------------------------------------------------
-# 以降の関数は変更不要です（そのまま貼り付けてください）
-# ---------------------------------------------------------
 
 def _normalize_title(text: str) -> str:
     text = unicodedata.normalize("NFKC", text or "")
@@ -168,29 +144,34 @@ def _render_index(**kwargs):
 
 def _load_slots_or_error():
     try: return fetch_available_slots(), None, True
-    except AuthRequired: return [], None, False
     except Exception as exc: return [], str(exc), False
-
-@app.route("/auth")
-def auth():
-    flow = create_oauth_flow()
-    url, state = flow.authorization_url(access_type="offline", prompt="consent")
-    session["oauth_state"] = state
-    session["code_verifier"] = flow.code_verifier
-    return redirect(url)
-
-@app.route("/oauth2callback")
-def oauth2callback():
-    state = session.get("oauth_state")
-    code_verifier = session.get("code_verifier")
-    flow = create_oauth_flow(state=state, code_verifier=code_verifier)
-    flow.fetch_token(authorization_response=request.url)
-    # 実際にはここに取得したクレデンシャルを表示させ、GOOGLE_TOKEN_JSON に設定させる導線が必要
-    return redirect(url_for("index"))
 
 @app.route("/")
 def index():
     slots, error, authenticated = _load_slots_or_error()
     return _render_index(slots=slots, error=error, authenticated=authenticated)
 
-# ... (confirm, book 等のルートはそのまま継続)
+@app.route("/confirm", methods=["POST"])
+def confirm():
+    counseling_type = request.form.get("counseling_type", "カウンセリング")
+    slot_id = request.form.get("slot", "")
+    slot = _parse_slot_id(slot_id)
+    if not slot:
+        return "エラー：枠が選択されていません。"
+    return render_template("index.html", submitted=True, slot=slot, counseling_type=counseling_type)
+
+@app.route("/book", methods=["POST"])
+def book():
+    counseling_type = request.form.get("counseling_type", "カウンセリング")
+    slot_id = request.form.get("slot", "")
+    name = request.form.get("name", "")
+    email = request.form.get("email", "")
+    slot = _parse_slot_id(slot_id)
+    
+    book_slot(counseling_type, name, email, slot)
+    send_booking_emails(name, email, counseling_type, slot["label"])
+    
+    return "予約が完了しました。確認メールをお送りしました。"
+
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
