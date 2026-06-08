@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "google-docs": {
+      "command": "npx",
+      "args": ["-y", "@fryorcraken/google-docs-mcp"],
+      "env": {
+        "GOOGLE_CLIENT_ID": "ここにGoogle CloudのクライアントIDを貼り付け",
+        "GOOGLE_CLIENT_SECRET": "ここにクライアントシークレットを貼り付け"
+      }
+    }
+  }
+}

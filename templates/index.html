@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>カウンセリング予約</title>
+    <style>
+        body { font-family: "Hiragino Sans", "Yu Gothic", sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; color: #333; }
+        .box { border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px; background: #fff; }
+        .title { font-weight: bold; margin-bottom: 12px; }
+        .slot-label { display: block; padding: 12px; margin: 8px 0; border: 2px solid #ddd; border-radius: 8px; cursor: pointer; background: #fafafa; }
+        .slot-label:hover { background: #f0f7ff; border-color: #4a90d9; }
+        .slot-label:has(input:checked) { border-color: #4a90d9; background: #eef5fc; font-weight: bold; }
+        input[type="radio"] { margin-right: 8px; }
+        input[type="text"],
+        input[type="email"] { width: 100%; padding: 10px; font-size: 1rem; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+        .success-message { text-align: left; line-height: 2; white-space: pre-line; font-size: 1rem; margin: 16px 0; }
+        .mail-warning { margin-top: 12px; font-size: 0.85rem; color: #8a6d3b; background: #fffbea; padding: 10px; border-radius: 6px; }
+        button { background: #999; color: white; border: none; padding: 14px; border-radius: 8px; font-size: 16px; width: 100%; cursor: not-allowed; font-weight: bold; }
+        button.active { background: #4a90d9; cursor: pointer; }
+        button.active:hover { background: #357abd; }
+        .info-area { background: #e6f4ea; color: #137333; padding: 15px; border-radius: 8px; margin-top: 20px; line-height: 1.6; }
+        .error-area { background: #fce8e6; color: #c5221f; padding: 15px; border-radius: 8px; margin-bottom: 20px; line-height: 1.6; }
+        .notice { background: #fffbea; border: 1px solid #e8dca0; padding: 12px; border-radius: 8px; font-size: 0.85rem; margin-bottom: 20px; line-height: 1.6; }
+        .nav-link { display: inline-block; margin-top: 15px; color: #4a90d9; text-decoration: none; }
+        .nav-link:hover { text-decoration: underline; }
+        .field-label { display: block; margin-bottom: 6px; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+
+    <h2>カウンセリング予約</h2>
+
+    {% if error %}
+        <div class="error-area">{{ error }}</div>
+    {% endif %}
+
+    {% if auth_required %}
+        <div class="box" style="text-align: center; border-color: #4a90d9; background: #f0f7ff;">
+            <p style="margin-top: 0;">Googleカレンダーと連携するには、まずログインが必要です。</p>
+            <p style="font-size: 0.85rem; color: #555;">
+                ブラウザで <strong>calendar/u/1</strong> を見ている場合は、<br>
+                同じ Google アカウントを選んでください。
+            </p>
+            <a href="/auth" style="display: inline-block; margin-top: 8px; padding: 14px 28px; background: #4a90d9; color: #fff; text-decoration: none; border-radius: 8px; font-weight: bold;">
+                Googleカレンダーと連携する
+            </a>
+        </div>
+    {% endif %}
+
+    {% if success %}
+        <div class="box" style="border-color: #137333; background: #f3f9f4;">
+            <div class="success-message">{{ customer_name }}
+ご予約いただきありがとうございます。
+［ご予約日］
+{{ slot.label }}
+
+以上</div>
+            {% if mail_warning %}
+            <p class="mail-warning">{{ mail_warning }}</p>
+            {% endif %}
+            <a href="/" class="nav-link">予約トップに戻る</a>
+        </div>
+    {% else %}
+
+        {% if authenticated and not submitted %}
+        <div class="notice">
+            カレンダー連携済みです。空き枠は左サイドバーでチェックが入っているカレンダーから取得します（最大{{ lookahead_days }}日先まで）。
+        </div>
+        {% endif %}
+
+        {% if authenticated or submitted %}
+        <form action="{% if submitted %}/book{% else %}/confirm{% endif %}" method="post">
+
+            <div class="box">
+                <div class="title">カウンセリングの種類</div>
+                <label class="slot-label">
+                    <input type="radio" name="counseling_type" value="初回無料カウンセリング"
+                        {% if counseling_type == '初回無料カウンセリング' or not counseling_type %}checked{% endif %}
+                        {% if submitted %}disabled{% endif %}>
+                    初回無料カウンセリング
+                </label>
+                <label class="slot-label">
+                    <input type="radio" name="counseling_type" value="通常カウンセリング"
+                        {% if counseling_type == '通常カウンセリング' %}checked{% endif %}
+                        {% if submitted %}disabled{% endif %}>
+                    通常カウンセリング
+                </label>
+                {% if submitted %}
+                    <input type="hidden" name="counseling_type" value="{{ counseling_type }}">
+                {% endif %}
+            </div>
+
+            {% if submitted %}
+            <div class="box">
+                <span class="field-label">お名前 <span style="color:#c5221f;">*</span></span>
+                <input type="text" name="name" placeholder="例：山田 太郎" value="{{ name or '' }}" required>
+            </div>
+            <div class="box">
+                <span class="field-label">メールアドレス <span style="color:#c5221f;">*</span></span>
+                <input type="email" name="email" placeholder="例：yamada@example.com" value="{{ email or '' }}" required>
+                <p style="font-size: 0.8rem; color: #666; margin: 8px 0 0;">予約確定後、ご本人と管理者の双方に確認メールをお送りします。</p>
+            </div>
+            {% endif %}
+
+            <div class="box">
+                <div class="title">空き枠を選択</div>
+
+                {% if submitted %}
+                    <div style="padding: 12px; background: #f5f5f5; border-radius: 6px; font-weight: bold;">
+                        {{ slot.label }}
+                    </div>
+                    <input type="hidden" name="slot" value="{{ slot.id }}">
+                {% else %}
+                    {% if slots %}
+                        {% for s in slots %}
+                            <label class="slot-label">
+                                <input type="radio" name="slot" value="{{ s.id }}"
+                                    {% if slot_id == s.id %}checked{% endif %}
+                                    onchange="enableConfirm()">
+                                {{ s.label }}
+                            </label>
+                        {% endfor %}
+                    {% else %}
+                        <p style="color: #666; font-size: 14px; line-height: 1.6;">
+                            予約可能な「受付可能」枠が見つかりませんでした。<br>
+                            ・タイトルが「受付可能」か（全角・余分な空白なし）<br>
+                            ・{{ lookahead_days }}日以内の日時指定の予定か<br>
+                            ・OAuth でログインしたアカウントが calendar/u/1 と同じか<br>
+                            を確認してください。
+                        </p>
+                    {% endif %}
+                {% endif %}
+            </div>
+
+            {% if submitted %}
+                <button type="submit" class="active">この内容で予約を確定する</button>
+                <a href="/" class="nav-link">日時を選び直す</a>
+            {% else %}
+                <button type="submit" id="action-btn" disabled>予約内容を確認</button>
+            {% endif %}
+        </form>
+        {% endif %}
+
+        {% if submitted %}
+            <div class="info-area">
+                <strong>確認内容</strong><br>
+                種類：{{ counseling_type }}<br>
+                日時：{{ slot.label }}<br>
+                {% if name %}お名前：{{ name }}<br>{% endif %}
+                {% if email %}メール：{{ email }}{% endif %}
+            </div>
+        {% endif %}
+
+    {% endif %}
+
+    <script>
+        function enableConfirm() {
+            const btn = document.getElementById('action-btn');
+            if (!btn) return;
+            const checked = document.querySelector('input[name="slot"]:checked');
+            btn.disabled = !checked;
+            btn.classList.toggle('active', !!checked);
+        }
+        enableConfirm();
+    </script>
+</body>
+</html>
