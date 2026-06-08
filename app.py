@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import unicodedata
 from datetime import datetime, timedelta
+from email.mime.text import MIMEText
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -15,19 +17,14 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from mailer import (
-    format_honorific_name,
-    init_mail,
-    is_mail_configured,
-    send_booking_emails,
-    validate_email,
-)
-
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "counseling-reservation-local-dev")
-init_mail(app)
 
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
+# 権限スコープ：カレンダー操作に加え、Gmailの送信(gmail.send)を追加
+SCOPES = [
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/gmail.send"
+]
 SLOT_TITLE = "受付可能"
 LOOKAHEAD_DAYS = 14
 JST = ZoneInfo("Asia/Tokyo")
@@ -57,6 +54,9 @@ def get_credentials() -> Credentials:
 
 def get_calendar_service():
     return build("calendar", "v3", credentials=get_credentials())
+
+def get_gmail_service():
+    return build("gmail", "v1", credentials=get_credentials())
 
 def _normalize_title(text: str) -> str:
     text = unicodedata.normalize("NFKC", text or "")
@@ -137,6 +137,21 @@ def book_slot(counseling_type: str, name: str, email: str, slot: dict) -> None:
     service.events().insert(calendarId=slot["calendar_id"], body={"summary": counseling_type, "description": _build_calendar_description(name, email, counseling_type), "start": {"dateTime": slot["start"].isoformat()}, "end": {"dateTime": slot["end"].isoformat()}}).execute()
     service.events().delete(calendarId=slot["calendar_id"], eventId=slot["event_id"]).execute()
 
+# Gmail APIを使ったメール送信関数（Renderのブロックを迂回）
+def send_gmail_via_api(to_email: str, subject: str, body_text: str) -> None:
+    try:
+        service = get_gmail_service()
+        message = MIMEText(body_text)
+        message["to"] = to_email
+        message["subject"] = subject
+        
+        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+        service.users().messages().send(userId="me", body={"raw": raw_message}).execute()
+        print(f"Email successfully sent to {to_email}")
+    except Exception as e:
+        print(f"Failed to send email to {to_email}: {e}")
+        raise e
+
 def _render_index(**kwargs):
     defaults = {"slots": [], "error": None, "submitted": False, "success": False, "auth_required": False, "authenticated": False, "lookahead_days": LOOKAHEAD_DAYS}
     defaults.update(kwargs)
@@ -168,8 +183,39 @@ def book():
     email = request.form.get("email", "")
     slot = _parse_slot_id(slot_id)
     
+    if not slot:
+        return "エラー：無効な予約枠です。"
+
+    # 1. カレンダーへ登録＆空き枠削除
     book_slot(counseling_type, name, email, slot)
-    send_booking_emails(name, email, counseling_type, slot["label"])
+    
+    # 2. 予約者向けの確認メール本文
+    user_mail_body = (
+        f"{name} 様\n\n"
+        f"心理カウンセリング ツナグテ へのご予約、誠にありがとうございます。\n"
+        f"以下の内容で予約が確定いたしました。\n\n"
+        f"----------------------------------------\n"
+        f"【日時】{slot['label']}\n"
+        f"【メニュー】{counseling_type}\n"
+        f"----------------------------------------\n\n"
+        f"当日お会いできるのを心よりお待ちしております。\n"
+        f"よろしくお願いいたします。\n\n"
+        f"心理カウンセリング ツナグテ"
+    )
+    
+    # 3. あなた（管理者）向けの通知メール本文
+    admin_email = os.environ.get("ADMIN_EMAIL", email)
+    admin_mail_body = (
+        f"【自動通知】新しい予約が入りました。\n\n"
+        f"お名前: {name} 様\n"
+        f"メールアドレス: {email}\n"
+        f"日時: {slot['label']}\n"
+        f"メニュー: {counseling_type}\n"
+    )
+    
+    # 4. Gmail APIでそれぞれに送信
+    send_gmail_via_api(email, "【ツナグテ】ご予約確定のご案内", user_mail_body)
+    send_gmail_via_api(admin_email, "【管理用通知】新しい予約が確定しました", admin_mail_body)
     
     return "予約が完了しました。確認メールをお送りしました。"
 
